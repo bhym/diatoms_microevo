@@ -1,0 +1,176 @@
+//parallel  ./bin/slim -d S={1} -d REC_RATE=1E{2} -d msatMu=1E{3} -d SEXREP={4} models/new.slim ::: $(shuf -i 1-8345879009179 -n 1) ::: $(seq -8 2 -4) ::: $(seq -4 -2) ::: 0.5 0.35 0.2
+initialize()
+{
+	initializeSLiMModelType("nonWF");
+	defineConstant("L1", 99999);
+	defineConstant("msatCount", 5); // number of microsats
+	//defineConstant("msatMu", 0.003); // mutation rate per microsat (1 to 3 E-3)
+	defineConstant("msatUnique", T); // Do we want to keep track of all the unique microsats (TRUE) or join them in a single lineage (FALSE)?
+	
+	// This is needed because a microsat will appear each time a microsat mut occurs,
+	// regardless of the existence of a microsat with the same number of repeats.
+	//defineConstant("SEXREP", 0.2);
+	defineConstant("MUT_RATE", 0);
+	//defineConstant("REC_RATE", 3e-6);
+	defineConstant("BLOOM_START", 126);
+	defineConstant("BLOOM_DURAT", 60);
+	defineConstant("K", 1000);
+	defineConstant("BM", 100);
+	//defineConstant("S", 123);
+	initializeMutationType("m1", 0.5, "f", 0.0);
+	m1.convertToSubstitution = T;
+	initializeGenomicElementType("g1", m1, 1.0);
+	initializeGenomicElement(g1, 0, L1);
+	initializeMutationRate(MUT_RATE);
+	initializeRecombinationRate(REC_RATE);
+	
+	// microsatellite mutation type; also neutral, but magenta
+	initializeMutationType("m2", 0.5, "f", 0.0); // microsat mutation type (technically, a microsat will be a mutation at a specific position,
+	
+	// with the tag property storing the number of reps
+	m2.convertToSubstitution = F; // prevent microsats from fixing, since they are a permanent feature of the chromosomal structure
+}
+
+reproduction()
+{
+	if (sim.generation % BLOOM_START == BLOOM_DURAT / 2)
+	{
+		num = SEXREP * p1.individualCount;
+		intNum = asInteger(num);
+		if (intNum > 4)
+		{
+			parents = sample(p1.individuals, intNum);
+			couples = seq(0, intNum - 2, by=2);
+			for (i in couples)
+			{
+				parent1 = parents[i];
+				parent2 = parents[i + 1];
+				b1 = sim.chromosome.drawBreakpoints(parent1);
+				b2 = sim.chromosome.drawBreakpoints(parent2);
+				child1 = p1.addRecombinant(parent1.genome1, parent1.genome2, b1, parent2.genome1, parent2.genome2, b2);
+				child2 = p1.addRecombinant(parent1.genome2, parent1.genome1, b1, parent2.genome1, parent2.genome2, b2);
+			}
+			parents.fitnessScaling = 0;
+			self.active = 0;
+		}
+	}
+	else
+	{
+		child = p1.addCloned(individual);
+	}
+}
+
+modifyChild()
+{
+	// mutate microsatellites with rate msatMu
+	for (genome in child.genomes) // iterate through all newly-generated genomes
+	{
+		mutCount = rpois(1, msatMu * msatCount); // sample number of microsats that will mutate from a poisson distribution with l = microsat_mutrate x microsat_num
+		
+		// microsats will mutate indipendently
+		if (mutCount) // if you have more than zero mutations
+		{
+			mutSites = sample(msatPositions, mutCount); // sample the positions that will mutate from an uniform ditribution (ALL MSATS HAVE THE SAME CHANCE TO MUTATE)
+			msats = genome.mutationsOfType(m2); // take all the m2 mut types (i.e. the microsats) in the genome
+			for (mutSite in mutSites) // for each site that will mutate
+			{
+				msat = msats[msats.position == mutSite]; // take all the microsats in that site
+				repeats = msat.tag; // get the number of repeats
+				
+				// MUTATION FORMULA FOR MICROSATS
+				repeats = repeats + (rdunif(1, 0, 1) * 2 - 1); // modify the number of repeats by adding -1 or +1
+				if (repeats < 2) // goto mit 5. if the new number of repeats is lower than five, forget it (do not update the tag with this value)
+					next;
+				
+				// define the unification behaviour (do we want all microsat arising from a mut event, or just separate the number of repeats?)
+				if (msatUnique) // the decision is made using the msatUnique flag (see initialization)
+				{
+					all_msats = sim.mutationsOfType(m2); // take all the m2 mutations of (i.e. m2 mutation type) in the population
+					msatsAtSite = all_msats[all_msats.position == mutSite]; // take all the microsats in the current site
+					matchingMut = msatsAtSite[msatsAtSite.tag == repeats]; // select all the microsat alleles in the current site with the same number of repeats
+					if (matchingMut.size() == 1) // if there is only one
+					{
+						genome.removeMutations(msat); // remove the existing mutation
+						genome.addMutations(matchingMut); // add the new mutation
+						next;
+					}
+				}
+				
+				// make a new mutation with the new repeat count
+				genome.removeMutations(msat); // remove the msat mutations altogether
+				msat = genome.addNewDrawnMutation(m2, mutSite); // add a new m2 mutation type at mutSite positions(the microsats)
+				msat.tag = repeats; // definetag attribute (i.e. the number of repetitions) for each microsat as the newly calculated number
+			}
+		}
+	}
+	return T;
+}
+
+1 early()
+{
+	setSeed(123);
+	print(getSeed());
+	sim.addSubpop("p1", K);
+	
+	// create some microsatellites at random positions
+	// The initial population will be homogeneous: the number of repeats of a given microsat is the same across all genomes
+	genomes = sim.subpopulations.genomes; //take all the genomes
+	positions = rdunif(msatCount, 0, L1 - 1); // sampple the  microsat position  from a discrete uniform distribution in the [0, L+1] interval
+	repeats = rpois(msatCount, 5) + 2; // sample number of reps for each microsat from a poisson distribution with l=20 (adding 5 to the result too)
+	for (msatIndex in 0:(msatCount - 1)) // for each microsat
+	{
+		pos = positions[msatIndex]; // define a position
+		mut = genomes.addNewDrawnMutation(m2, pos); // mark the position with a m2 mutation (i.e. the microsat)
+		mut.tag = repeats[msatIndex]; // associate the number of repeats to the microsat
+	}
+	defineConstant("msatPositions", positions); // remember the microsat positions for later
+}
+
+2: early()
+{
+	if ((sim.generation % BLOOM_START) <= BLOOM_DURAT)
+	{
+		K_mod = K * BM;
+	}
+	else
+	{
+		K_mod = K;
+	}
+	if ((sim.generation) % BLOOM_START == BLOOM_DURAT / 2)
+	{
+		num = SEXREP * p1.individualCount;
+		intNum = p1.individualCount - asInteger(num);
+	}
+	else
+	{
+		intNum = p1.individualCount;
+	}
+	sim.tag = K_mod;
+	p1.fitnessScaling = K_mod / intNum;
+}
+
+756: late()
+{
+	if ((sim.generation) % 2 == 0)
+	{
+	inds = sim.subpopulations.individuals;
+		for (ind in inds)
+		{
+			line = sapply(ind.genomes[0].mutationsOfType(m2), "paste(c(sim.generation, ind.index, \"1\", applyValue.position, applyValue.tag));");
+			writeFile("~/slim/cur_out/s" + "_rr_" + REC_RATE + "_mu_" + msatMu + "_perc_" + SEXREP + "_msats.txt", line, append=T);
+			line = sapply(ind.genomes[1].mutationsOfType(m2), "paste(c(sim.generation, ind.index, \"2\", applyValue.position, applyValue.tag));");
+			writeFile("~/slim/cur_out/s" + "_rr_" + REC_RATE + "_mu_" + msatMu + "_perc_" + SEXREP + "_msats.txt", line, append=T);
+		}
+	}
+}
+
+10 early()
+{
+	setSeed(S);
+	print(getSeed());
+}
+
+1512 late()
+{
+	sim.simulationFinished();
+}
