@@ -5,7 +5,7 @@ source("preform_data.R")
 
 source("Fig1.R")
 source("Fig3.R")
-source("Fig4.R")
+source("Fig4.R") #takes time!
 
 a <- wrap_plots(zoom_Rpl_mu, Hpl_mu, guides = "collect", widths = c(2, 1)) &
   theme(legend.position = "top", legend.margin = margin())

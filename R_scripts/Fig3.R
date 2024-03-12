@@ -15,6 +15,8 @@ moment[which(nam_bong$Generation == 1500)] <- "bloom end"
 bong <- all_  %>% select(H:R,-N)
 PCA <- prcomp(bong, scale=T, center=T)
 PCAvalues <- data.frame(mu = factor(nam_bong$mu), perc = factor(nam_bong$perc), rr = factor(nam_bong$rr), PCA$x, Moment = moment)
+
+# 0.2 sex, 1e-4 rr, all mutrat
 PCAvalues <- PCAvalues %>% filter(perc == 0.2, rr == 1e-4)
 
 # Extract loadings of the variables
